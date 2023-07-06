@@ -5,4 +5,6 @@ To [download](https://github.com/BlackMesa123/proprietary_vendor_samsung_a54x/re
 
 <img src="readme-res/omc-info.jpg" width="40%"/>
 
-Credits to [@jesec](https://github.com/jesec) and [@corsicanu](https://github.com/corsicanu) for the original GitHub Actions script.
+### Credits
+- [@jesec](https://github.com/jesec) and [@corsicanu](https://github.com/corsicanu) for the original GitHub Actions script.
+- [@unix3dgforce](https://github.com/unix3dgforce) for his [lpunpack.py](https://github.com/unix3dgforce/lpunpack) script.
