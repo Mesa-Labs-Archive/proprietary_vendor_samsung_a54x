@@ -1,0 +1,222 @@
+name: Check firmware update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 12 * * *"
+  push:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # A54X_CHN_OPEN
+          - model: "SM-A5460"
+            csc: "CHC"
+            omc: "CHC"
+          # A54X_CHN_HK
+          - model: "SM-A5460"
+            csc: "BRI"
+            omc: "OZS"
+          # A54X_EUR_OPEN
+          - model: "SM-A546B"
+            csc: "EUX"
+            omc: "OXM"
+          # A54X_SEA_OPEN
+          - model: "SM-A546E"
+            csc: "INS"
+            omc: "ODM"
+          - model: "SM-A546E"
+            csc: "EGY"
+            omc: "OJM"
+          - model: "SM-A546E"
+            csc: "XID"
+            omc: "OLE"
+          - model: "SM-A546E"
+            csc: "XSA"
+            omc: "OLM"
+          - model: "SM-A546E"
+            csc: "PEO"
+            omc: "OWB"
+          - model: "SM-A546E"
+            csc: "ZTO"
+            omc: "OWO"
+          - model: "SM-A546E"
+            csc: "SEK"
+            omc: "OXE"
+          # A54X_USA_SINGLEX
+          - model: "SM-A546U"
+            csc: "CCT"
+            omc: "OYN"
+          # A54X_USA_OPEN
+          - model: "SM-A546U1"
+            csc: "XAA"
+            omc: "OYM"
+          # A54X_USA_SINGLEW
+          - model: "SM-A546V"
+            csc: "VZW"
+            omc: "OYN"
+          # A54X_CAN_SINGLE
+          - model: "SM-A546W"
+            csc: "XAC"
+            omc: "OYV"
+          # A54X_KOR_SKT
+          - model: "SM-A546S"
+            csc: "SKC"
+            omc: "SKC"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Compare latest version with current version
+        run: |
+          need_update=0
+          latest=`curl --retry 5 --retry-delay 5 http://fota-cloud-dn.ospserver.net/firmware/${{ matrix.csc }}/${{ matrix.model }}/version.xml | grep latest | sed 's/^[^>]*>//' | sed 's/<.*//'`
+          latest_short=`echo $latest | cut -d'/' -f1`
+          latest_csc=`echo $latest | cut -d'/' -f2`
+          latest_modem=`echo $latest | cut -d'/' -f3`
+          current=`cat current.${{ matrix.model }}_${{ matrix.omc }}` || need_update=1
+          [[ $latest != $current ]] && need_update=1
+          echo "latest_version=$latest" >> $GITHUB_ENV
+          echo "latest_shortversion=$latest_short" >> $GITHUB_ENV
+          echo "latest_cscversion=$latest_csc" >> $GITHUB_ENV
+          echo "latest_modemversion=$latest_modem" >> $GITHUB_ENV
+          echo "need_update=$need_update" >> $GITHUB_ENV
+
+      - name: Set up Node.js
+        if: env.need_update == 1
+        uses: actions/setup-node@v3
+        with:
+          node-version: 'latest'
+
+      - name: Set up Python 3
+        if: env.need_update == 1
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        if: env.need_update == 1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblz4-tool zip simg2img f2fs-tools
+          sudo npm i -g samfirm
+
+      - name: Fetch firmware
+        if: env.need_update == 1
+        run: samfirm -m ${{ matrix.model }} -r ${{ matrix.csc }}
+
+      - name: Get path of files
+        if: env.need_update == 1
+        run: |
+          echo "ap_tar=`find -name AP*`" >> $GITHUB_ENV
+          echo "bl_tar=`find -name BL*`" >> $GITHUB_ENV
+          echo "cp_tar=`find -name CP*`" >> $GITHUB_ENV
+          echo "csc_tar=`find -name CSC*`" >> $GITHUB_ENV
+          echo "home_csc_tar=`find -name HOME_CSC*`" >> $GITHUB_ENV
+
+      - name: Check downloaded firmware version
+        if: env.need_update == 1
+        run: |
+          version_short=`echo ${{ env.ap_tar }} | cut -d'_' -f3`
+          version_csc=`echo ${{ env.csc_tar }} | cut -d'_' -f4`
+          version_modem=`echo ${{ env.cp_tar }} | cut -d'_' -f3`
+          [[ $version_short == ${{ env.latest_shortversion }} ]]
+          [[ $version_csc == ${{ env.latest_cscversion }} ]]
+          [[ $version_modem == ${{ env.latest_modemversion }} ]]
+          echo PDA version: $version_short > versions.txt
+          echo CSC version: $version_csc >> versions.txt
+          echo Modem version: $version_modem >> versions.txt
+
+      - name: Cleanup space
+        if: env.need_update == 1
+        run: |
+          sudo apt-get remove --purge -y "php*" "dotnet*" "mysql*" "nodejs*" "clang*" "google*"
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          sudo rm -rf /usr/local
+
+      - name: Extract kernel images
+        if: env.need_update == 1
+        env:
+          FILES: boot.img.lz4 dtbo.img.lz4 init_boot.img.lz4 vbmeta.img.lz4 vendor_boot.img.lz4
+        run: |
+          for file in $FILES; do tar xvf ${{ env.ap_tar }} ${file}; done
+          tar cvf ${{ env.latest_shortversion }}_kernel.tar *.lz4
+          rm *.lz4
+
+      - name: Extract PIT file
+        if: env.need_update == 1
+        run: |
+          tar --wildcards --exclude='*/*' -xvf ${{ env.csc_tar }} '*.pit'
+          echo "pit_file=`find -name *.pit`" >> $GITHUB_ENV
+
+      - name: Generate patched vbmeta
+        if: env.need_update == 1
+        run: |
+          tar xvf ${{ env.ap_tar }} vbmeta.img.lz4
+          lz4 -d vbmeta.img.lz4 vbmeta.img
+          rm vbmeta.img.lz4
+          printf "$(printf '\\x%02X' 3)" | dd of="vbmeta.img" bs=1 seek=123 count=1 conv=notrunc &> /dev/null
+          tar cvf ${{ env.latest_shortversion }}_patched_vbmeta.tar vbmeta.img
+          rm vbmeta.img
+
+      - name: Extract vendor and vendor_dlkm partition
+        if: env.need_update == 1
+        run: |
+          tar xvf ${{ env.ap_tar }} super.img.lz4
+          lz4 -d super.img.lz4 super.img
+          rm super.img.lz4
+          simg2img super.img super_raw.img
+          rm super.img
+          mv super_raw.img super.img
+          python3 tools/bin/lpunpack.py -p vendor,vendor_dlkm super.img .
+          rm super.img
+          [[ -e vendor.img ]] && zip ${{ env.latest_shortversion }}_vendor.zip vendor.img
+          [[ -e vendor_dlkm.img ]] && zip ${{ env.latest_shortversion }}_vendor_dlkm.zip vendor_dlkm.img
+          [[ -e vendor.img ]] && rm vendor.img
+          [[ -e vendor_dlkm.img ]] && rm vendor_dlkm.img
+
+      - name: Update current version
+        if: env.need_update == 1
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git pull origin ${{github.ref}} --ff-only
+          echo ${{ env.latest_version }} > current.${{ matrix.model }}_${{ matrix.omc }}
+          git add current.${{ matrix.model }}_${{ matrix.omc }}
+          git commit -m "${{ matrix.model }}: ${{ env.latest_version }}"
+          git tag "${{ env.latest_shortversion }}_${{ matrix.omc }}"
+
+      - name: Push changes to repo
+        if: env.need_update == 1
+        uses: ad-m/github-push-action@master
+        with:
+          tags: true
+          github_token: ${{ secrets.TOKEN }}
+
+      - name: Upload release assets
+        if: env.need_update == 1
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        with:
+          body_path: versions.txt
+          tag_name: "${{ env.latest_shortversion }}_${{ matrix.omc }}"
+          name: "${{ env.latest_shortversion }} - ${{ matrix.model }} - ${{ matrix.omc }}"
+          files: |
+            ${{ env.bl_tar }}
+            ${{ env.cp_tar }}
+            ${{ env.home_csc_tar }}
+            ${{ env.latest_shortversion }}_kernel.tar
+            ${{ env.pit_file }}
+            ${{ env.latest_shortversion }}_patched_vbmeta.tar
+            ${{ env.latest_shortversion }}_vendor.zip
+            ${{ env.latest_shortversion }}_vendor_dlkm.zip
