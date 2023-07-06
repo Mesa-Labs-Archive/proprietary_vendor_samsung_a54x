@@ -56,10 +56,6 @@ jobs:
           - model: "SM-A546U1"
             csc: "XAA"
             omc: "OYM"
-          # A54X_USA_SINGLEW
-          - model: "SM-A546V"
-            csc: "VZW"
-            omc: "OYN"
           # A54X_CAN_SINGLE
           - model: "SM-A546W"
             csc: "XAC"
